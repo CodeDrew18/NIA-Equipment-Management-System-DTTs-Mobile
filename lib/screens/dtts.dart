@@ -54,6 +54,8 @@ class _DailyDriversTripTicketScreenState
   bool _isFetchingDetails = false;
   bool _isLoadingAlertVisible = false;
 
+  static const String _computedHintText = 'Auto-computed';
+
   @override
   void initState() {
     super.initState();
@@ -150,6 +152,24 @@ class _DailyDriversTripTicketScreenState
     _remarksController = TextEditingController(
       text: _valueAsString(_ticketData['remarks']),
     );
+
+    _registerComputedFieldListeners();
+    _recomputeFormulaFields();
+  }
+
+  void _registerComputedFieldListeners() {
+    final sourceControllers = [
+      _odometerStartController,
+      _odometerEndController,
+      _fuelBalanceBeforeController,
+      _fuelIssuedRegionalController,
+      _fuelPurchasedTripController,
+      _fuelIssuedNiaController,
+    ];
+
+    for (final controller in sourceControllers) {
+      controller.addListener(_recomputeFormulaFields);
+    }
   }
 
   void _observeConnectivity() {
@@ -292,6 +312,8 @@ class _DailyDriversTripTicketScreenState
         _greaseController.text = _valueAsString(_ticketData['grease_kgs']);
         _remarksController.text = _valueAsString(_ticketData['remarks']);
       });
+
+      _recomputeFormulaFields();
     } catch (_) {
       // Keep existing values when show endpoint fails.
     } finally {
@@ -388,6 +410,74 @@ class _DailyDriversTripTicketScreenState
     return num.tryParse(trimmed);
   }
 
+  double _roundTo2(num value) {
+    return (value * 100).round() / 100;
+  }
+
+  String _formatComputedNumber(num? value) {
+    if (value == null) {
+      return '';
+    }
+    return _roundTo2(value).toStringAsFixed(2);
+  }
+
+  void _setComputedControllerValue(
+    TextEditingController controller,
+    num? value,
+  ) {
+    final formatted = _formatComputedNumber(value);
+    if (controller.text != formatted) {
+      controller.text = formatted;
+    }
+  }
+
+  void _recomputeFormulaFields() {
+    final odometerStart = _parseNumber(_odometerStartController.text);
+    final odometerEnd = _parseNumber(_odometerEndController.text);
+
+    num? distanceTravelled;
+    if (odometerStart != null && odometerEnd != null) {
+      distanceTravelled = _roundTo2(odometerEnd - odometerStart);
+    }
+
+    final fuelBalanceBefore = _parseNumber(_fuelBalanceBeforeController.text);
+    final fuelIssuedRegional = _parseNumber(_fuelIssuedRegionalController.text);
+    final fuelPurchasedTrip = _parseNumber(_fuelPurchasedTripController.text);
+    final fuelIssuedNia = _parseNumber(_fuelIssuedNiaController.text);
+
+    final fuelValues = [
+      fuelBalanceBefore,
+      fuelIssuedRegional,
+      fuelPurchasedTrip,
+      fuelIssuedNia,
+    ];
+
+    final hasFuelValue = fuelValues.any((value) => value != null);
+    num? fuelTotal;
+    if (hasFuelValue) {
+      fuelTotal = _roundTo2(
+        fuelValues.fold<double>(
+          0,
+          (sum, value) => sum + ((value ?? 0).toDouble()),
+        ),
+      );
+    }
+
+    num? fuelBalanceAfter;
+    if (fuelTotal != null && fuelTotal != 0 && distanceTravelled != null) {
+      fuelBalanceAfter = _roundTo2(
+        fuelTotal - ((distanceTravelled / fuelTotal) / 4),
+      );
+    }
+
+    _setComputedControllerValue(
+      _distanceTravelledController,
+      distanceTravelled,
+    );
+    _setComputedControllerValue(_fuelTotalController, fuelTotal);
+    _setComputedControllerValue(_fuelBalanceAfterController, fuelBalanceAfter);
+  }
+
   String? _validateNumber(String? value) {
     final raw = value?.trim() ?? '';
     if (raw.isEmpty) {
@@ -458,6 +548,8 @@ class _DailyDriversTripTicketScreenState
       );
       return;
     }
+
+    _recomputeFormulaFields();
 
     final tripRequestId = int.tryParse(
       _ticketData['transportation_request_form_id']?.toString() ?? '',
@@ -764,6 +856,15 @@ class _DailyDriversTripTicketScreenState
                     style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
                   ),
                   const SizedBox(height: 8),
+                  const Text(
+                    'Auto formulas: Distance = Odometer End - Odometer Start | Total = Fuel Before + Fuel Issued Regional + Fuel Purchased Trip + Fuel Issued NIA | Estimated Balance After = Total - ((Distance / Total) / 4)',
+                    style: TextStyle(
+                      color: Color(0xFF3A4E5C),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
                   _buildNumberField(
                     controller: _odometerStartController,
                     label: 'Odometer Start',
@@ -774,7 +875,7 @@ class _DailyDriversTripTicketScreenState
                     label: 'Odometer End',
                     icon: Icons.speed,
                   ),
-                  _buildNumberField(
+                  _buildComputedNumberField(
                     controller: _distanceTravelledController,
                     label: 'Distance Travelled',
                     icon: Icons.route,
@@ -799,7 +900,7 @@ class _DailyDriversTripTicketScreenState
                     label: 'Fuel Issued NIA',
                     icon: Icons.local_gas_station,
                   ),
-                  _buildNumberField(
+                  _buildComputedNumberField(
                     controller: _fuelTotalController,
                     label: 'Fuel Total',
                     icon: Icons.local_gas_station,
@@ -809,9 +910,9 @@ class _DailyDriversTripTicketScreenState
                     label: 'Fuel Used',
                     icon: Icons.local_gas_station,
                   ),
-                  _buildNumberField(
+                  _buildComputedNumberField(
                     controller: _fuelBalanceAfterController,
-                    label: 'Fuel Balance After',
+                    label: 'Estimated Balance in Tank After',
                     icon: Icons.local_gas_station,
                   ),
                   _buildNumberField(
@@ -915,6 +1016,29 @@ class _DailyDriversTripTicketScreenState
           labelText: label,
           hintText: 'Enter numeric value',
           prefixIcon: Icon(icon),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildComputedNumberField({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: TextFormField(
+        controller: controller,
+        readOnly: true,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        decoration: InputDecoration(
+          labelText: label,
+          hintText: _computedHintText,
+          prefixIcon: Icon(icon),
+          filled: true,
+          fillColor: const Color(0xFFF2F7FB),
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
         ),
       ),
