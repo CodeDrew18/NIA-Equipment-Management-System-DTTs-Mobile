@@ -1,14 +1,24 @@
 import 'package:ems/auth/login_page_screen.dart';
+import 'package:ems/providers/dtt_provider.dart';
 import 'package:ems/screens/homepage_screen.dart';
+import 'package:ems/services/app_notification_service.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await AppNotificationService.initialize();
+
   final prefs = await SharedPreferences.getInstance();
   final isLoggedIn = prefs.getBool('is_logged_in') ?? false;
 
-  runApp(MyApp(isLoggedIn: isLoggedIn));
+  runApp(
+    ChangeNotifierProvider(
+      create: (_) => DttProvider(),
+      child: MyApp(isLoggedIn: isLoggedIn),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {

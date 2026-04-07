@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:ems/models/api_config.dart';
 import 'package:ems/screens/homepage_screen.dart';
+import 'package:quickalert/quickalert.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginPageScreen extends StatefulWidget {
@@ -18,6 +20,7 @@ class _LoginPageScreenState extends State<LoginPageScreen> {
   final userIdController = TextEditingController();
   final passwordController = TextEditingController();
   bool _isLoading = false;
+  bool _isLoadingAlertVisible = false;
 
   @override
   void dispose() {
@@ -32,94 +35,103 @@ class _LoginPageScreenState extends State<LoginPageScreen> {
       body: Stack(
         children: [
           SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const SizedBox(height: 8),
-                    const Text(
-                      'EMS',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Color(0xFF0D4C73),
-                        fontSize: 44,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Equipment Management System',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Color(0xFF24516B),
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 28),
-                    _buildInputField(
-                      controller: userIdController,
-                      label: 'UserId',
-                      hintText: 'Enter your account userId',
-                      icon: Icons.person_outline,
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly,
-                        LengthLimitingTextInputFormatter(6),
-                      ],
-                      validator: (value) {
-                        final userId = value?.trim() ?? '';
-                        if (userId.isEmpty) {
-                          return 'UserId is required';
-                        }
-                        if (userId.length != 6) {
-                          return 'UserId must be 6 digits';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 14),
-                    _buildInputField(
-                      controller: passwordController,
-                      label: 'Password',
-                      hintText: 'Enter your password',
-                      icon: Icons.lock_outline,
-                      obscureText: true,
-                      validator: (value) {
-                        if ((value ?? '').trim().isEmpty) {
-                          return 'Password is required';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 20),
-                    SizedBox(
-                      height: 52,
-                      child: ElevatedButton(
-                        onPressed: _isLoading ? null : _handleLogin,
-                        style: ElevatedButton.styleFrom(
-                          elevation: 0,
-                          foregroundColor: Colors.white,
-                          backgroundColor: const Color(0xFF0D4C73),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        child: const Text(
-                          'Login',
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 24,
+                ),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 430),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const SizedBox(height: 8),
+                        const Text(
+                          'EMS',
+                          textAlign: TextAlign.center,
                           style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.3,
+                            color: Color(0xFF0D4C73),
+                            fontSize: 44,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1.2,
                           ),
                         ),
-                      ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Equipment Management System',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Color(0xFF24516B),
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 28),
+                        _buildInputField(
+                          controller: userIdController,
+                          label: 'UserId',
+                          hintText: 'Enter your account userId',
+                          icon: Icons.person_outline,
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                            LengthLimitingTextInputFormatter(6),
+                          ],
+                          validator: (value) {
+                            final userId = value?.trim() ?? '';
+                            if (userId.isEmpty) {
+                              return 'UserId is required';
+                            }
+                            if (userId.length != 6) {
+                              return 'UserId must be 6 digits';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 14),
+                        _buildInputField(
+                          controller: passwordController,
+                          label: 'Password',
+                          hintText: 'Enter your password',
+                          icon: Icons.lock_outline,
+                          obscureText: true,
+                          validator: (value) {
+                            if ((value ?? '').trim().isEmpty) {
+                              return 'Password is required';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 20),
+                        SizedBox(
+                          height: 52,
+                          child: ElevatedButton(
+                            onPressed: _isLoading ? null : _handleLogin,
+                            style: ElevatedButton.styleFrom(
+                              elevation: 0,
+                              foregroundColor: Colors.white,
+                              backgroundColor: const Color(0xFF0D4C73),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            child: const Text(
+                              'Login',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.3,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -127,7 +139,7 @@ class _LoginPageScreenState extends State<LoginPageScreen> {
           if (_isLoading)
             Positioned.fill(
               child: ColoredBox(
-                color: Colors.black.withOpacity(0.25),
+                color: Colors.black.withValues(alpha: 0.25),
                 child: Center(
                   child: Container(
                     padding: const EdgeInsets.symmetric(
@@ -171,8 +183,9 @@ class _LoginPageScreenState extends State<LoginPageScreen> {
     setState(() {
       _isLoading = true;
     });
+    _showLoadingAlert('Validating account...');
 
-    final url = Uri.parse('http://192.168.1.41:8000/api/login');
+    final url = ApiConfig.loginUri();
 
     try {
       final response = await http.post(
@@ -197,15 +210,31 @@ class _LoginPageScreenState extends State<LoginPageScreen> {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('is_logged_in', true);
 
+        final authToken = _extractAuthToken(data);
+        if (authToken.isNotEmpty) {
+          await prefs.setString('auth_token', authToken);
+        } else {
+          await prefs.remove('auth_token');
+        }
+
+        final driverName = _extractDriverName(data);
+        if (driverName.isNotEmpty) {
+          await prefs.setString('driver_name', driverName);
+        }
+
         if (!mounted) {
           return;
         }
 
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(
-            const SnackBar(content: Text('Login successful. Redirecting...')),
-          );
+        _hideLoadingAlert();
+
+        await QuickAlert.show(
+          context: context,
+          type: QuickAlertType.success,
+          title: 'Login Successful',
+          text: 'Redirecting to homepage...',
+          confirmBtnText: 'OK',
+        );
 
         await Future<void>.delayed(const Duration(milliseconds: 500));
         if (!mounted) {
@@ -216,18 +245,35 @@ class _LoginPageScreenState extends State<LoginPageScreen> {
           MaterialPageRoute(builder: (_) => const HomepageScreen()),
         );
       } else {
+        _hideLoadingAlert();
+
         final serverMessage =
             data is Map<String, dynamic>
                 ? (data['message']?.toString() ?? 'Login failed.')
                 : 'Login failed.';
-        _showMessage(serverMessage);
+        await QuickAlert.show(
+          context: context,
+          type: QuickAlertType.error,
+          title: 'Login Failed',
+          text: serverMessage,
+          confirmBtnText: 'OK',
+        );
       }
     } catch (e) {
+      _hideLoadingAlert();
+
       if (!mounted) {
         return;
       }
-      _showMessage('Unable to connect to server. Please try again.');
+      await QuickAlert.show(
+        context: context,
+        type: QuickAlertType.error,
+        title: 'Network Error',
+        text: 'Unable to connect to server. Please try again.',
+        confirmBtnText: 'OK',
+      );
     } finally {
+      _hideLoadingAlert();
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -236,10 +282,85 @@ class _LoginPageScreenState extends State<LoginPageScreen> {
     }
   }
 
-  void _showMessage(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
+  void _showLoadingAlert(String text) {
+    if (!mounted || _isLoadingAlertVisible) {
+      return;
+    }
+
+    _isLoadingAlertVisible = true;
+    QuickAlert.show(
+      context: context,
+      type: QuickAlertType.loading,
+      title: 'Please wait',
+      text: text,
+      barrierDismissible: false,
+    );
+  }
+
+  void _hideLoadingAlert() {
+    if (!mounted || !_isLoadingAlertVisible) {
+      return;
+    }
+
+    _isLoadingAlertVisible = false;
+    try {
+      Navigator.of(context, rootNavigator: true).pop();
+    } catch (_) {
+      // Ignore in case dialog is already dismissed.
+    }
+  }
+
+  String _extractAuthToken(dynamic data) {
+    if (data is! Map<String, dynamic>) {
+      return '';
+    }
+
+    final directToken = data['token'] ?? data['access_token'];
+    if (directToken is String && directToken.trim().isNotEmpty) {
+      return directToken.trim();
+    }
+
+    final payload = data['data'];
+    if (payload is Map<String, dynamic>) {
+      final nestedToken = payload['token'] ?? payload['access_token'];
+      if (nestedToken is String && nestedToken.trim().isNotEmpty) {
+        return nestedToken.trim();
+      }
+    }
+
+    return '';
+  }
+
+  String _extractDriverName(dynamic data) {
+    if (data is! Map<String, dynamic>) {
+      return '';
+    }
+
+    final user = data['user'];
+    if (user is Map<String, dynamic>) {
+      final name = user['name'];
+      if (name is String && name.trim().isNotEmpty) {
+        return name.trim();
+      }
+    }
+
+    final payload = data['data'];
+    if (payload is Map<String, dynamic>) {
+      final nestedUser = payload['user'];
+      if (nestedUser is Map<String, dynamic>) {
+        final nestedName = nestedUser['name'];
+        if (nestedName is String && nestedName.trim().isNotEmpty) {
+          return nestedName.trim();
+        }
+      }
+
+      final directName = payload['name'];
+      if (directName is String && directName.trim().isNotEmpty) {
+        return directName.trim();
+      }
+    }
+
+    return '';
   }
 
   Widget _buildInputField({
