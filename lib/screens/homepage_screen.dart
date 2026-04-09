@@ -2,6 +2,7 @@ import 'package:ems/auth/login_page_screen.dart';
 import 'package:ems/providers/dtt_provider.dart';
 import 'package:ems/screens/dtts.dart';
 import 'package:ems/services/app_notification_service.dart';
+import 'package:ems/services/fcm_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:quickalert/quickalert.dart';
@@ -27,12 +28,15 @@ class _HomepageScreenState extends State<HomepageScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final provider = context.read<DttProvider>();
+
       await AppNotificationService.ensurePermission();
       if (!mounted) {
         return;
       }
 
-      await context.read<DttProvider>().start();
+      await FcmService.instance.syncTokenWithBackend();
+      await provider.start();
       await _loadDriverName();
     });
   }
@@ -120,7 +124,7 @@ class _HomepageScreenState extends State<HomepageScreen> {
     return source.sublist(0, end);
   }
 
-  void _loadMoreTickets(List<Map<String, dynamic>> source) {  
+  void _loadMoreTickets(List<Map<String, dynamic>> source) {
     final visibleCount = _visibleTickets(source).length;
     if (visibleCount >= source.length) {
       return;
@@ -188,6 +192,8 @@ class _HomepageScreenState extends State<HomepageScreen> {
     final provider = context.read<DttProvider>();
     await provider.stop();
     await provider.reset(clearPersistedKeys: true);
+    await FcmService.instance.clearTokenFromBackend();
+    await FcmService.instance.logoutFromBackend();
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('is_logged_in', false);

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:ems/models/api_config.dart';
 import 'package:ems/screens/homepage_screen.dart';
+import 'package:ems/services/fcm_service.dart';
 import 'package:quickalert/quickalert.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -186,14 +187,21 @@ class _LoginPageScreenState extends State<LoginPageScreen> {
     _showLoadingAlert('Validating account...');
 
     final url = ApiConfig.loginUri();
+    final fcmToken = await FcmService.instance.getCurrentToken();
+
+    final requestPayload = <String, dynamic>{
+      'userId': userIdController.text,
+      'password': passwordController.text,
+      'device_name': 'flutter-mobile',
+    };
+    if (fcmToken.isNotEmpty) {
+      requestPayload['fcm_token'] = fcmToken;
+    }
 
     try {
       final response = await http.post(
         url,
-        body: jsonEncode({
-          'userId': userIdController.text,
-          'password': passwordController.text,
-        }),
+        body: jsonEncode(requestPayload),
         headers: {'Content-Type': 'application/json'},
       );
 
@@ -221,6 +229,8 @@ class _LoginPageScreenState extends State<LoginPageScreen> {
         if (driverName.isNotEmpty) {
           await prefs.setString('driver_name', driverName);
         }
+
+        await FcmService.instance.syncTokenWithBackend();
 
         if (!mounted) {
           return;

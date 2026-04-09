@@ -4,7 +4,6 @@ import 'dart:convert';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:ems/models/api_config.dart';
 import 'package:ems/models/sqflite_config.dart';
-import 'package:ems/services/app_notification_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -360,7 +359,7 @@ class DttProvider extends ChangeNotifier {
       return;
     }
 
-    final newTicketDetails = <Map<String, String>>[];
+    var addedCount = 0;
 
     for (final ticket in fetchedTickets) {
       final key = _ticketKey(ticket);
@@ -380,19 +379,16 @@ class DttProvider extends ChangeNotifier {
               : 'Unknown requestor';
       final trfId = ticket['transportation_request_form_id']?.toString() ?? '-';
 
-      newTicketDetails.add({
-        'title': 'New Transportation Request',
-        'body': 'TRF ID $trfId - $destination ($requestor)',
-      });
-
       _notificationFeed.insert(0, {
         'title': 'New Transportation Request',
         'body': 'TRF ID $trfId - $destination ($requestor)',
         'created_at': DateTime.now().toIso8601String(),
       });
+
+      addedCount += 1;
     }
 
-    if (newTicketDetails.isEmpty) {
+    if (addedCount == 0) {
       _knownTicketKeys
         ..clear()
         ..addAll(incomingKeys);
@@ -400,19 +396,7 @@ class DttProvider extends ChangeNotifier {
       return;
     }
 
-    _unreadNotifications += newTicketDetails.length;
-
-    if (newTicketDetails.length == 1) {
-      await AppNotificationService.showNewTransportationRequest(
-        title: newTicketDetails.first['title']!,
-        body: newTicketDetails.first['body']!,
-      );
-    } else {
-      await AppNotificationService.showNewTransportationRequest(
-        title: 'New Transportation Requests',
-        body: '${newTicketDetails.length} new requests are available.',
-      );
-    }
+    _unreadNotifications += addedCount;
 
     _knownTicketKeys
       ..clear()

@@ -5,8 +5,9 @@ class AppNotificationService {
   AppNotificationService._();
 
   static const String _channelGroupKey = 'ems_alerts_group';
-  // Bump channel key so Android recreates channel settings with sound enabled.
-  static const String _channelKey = 'transportation_updates_v2';
+  // Keep this key in sync with AndroidManifest default channel id.
+  static const String defaultChannelKey = 'transportation_updates_v2';
+  static const String _channelKey = defaultChannelKey;
   static bool _initialized = false;
 
   static Future<void> initialize() async {
