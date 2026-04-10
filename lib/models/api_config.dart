@@ -1,7 +1,7 @@
 class ApiConfig {
   ApiConfig._();
 
-  static const String apiBaseUrl = 'http://192.168.1.41:8000/api';
+  static const String apiBaseUrl = 'http://192.168.1.210:8000/api';
   static const String _dailyTripTicketsPath = '/daily-trip-tickets';
   static const String _loginPath = '/login';
   static const String _fcmTokenPath = '/fcm-token';
