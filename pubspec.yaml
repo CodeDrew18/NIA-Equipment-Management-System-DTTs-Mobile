@@ -45,6 +45,7 @@ dependencies:
   flutter_launcher_icons: ^0.14.4
   firebase_core: ^4.6.0
   firebase_messaging: ^16.1.3
+  calendar_date_picker2: 2.0.1
 
 dev_dependencies:
   flutter_test:

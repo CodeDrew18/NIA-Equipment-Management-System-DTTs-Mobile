@@ -1,12 +1,16 @@
 import 'package:ems/auth/login_page_screen.dart';
 import 'package:ems/providers/dtt_provider.dart';
+import 'package:ems/screens/driver_evaluation_report_screen.dart';
 import 'package:ems/screens/dtts.dart';
+import 'package:ems/screens/monthly_official_travel_report_screen.dart';
 import 'package:ems/services/app_notification_service.dart';
 import 'package:ems/services/fcm_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:quickalert/quickalert.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+enum _DrawerSection { home, monthlyReport, driverEvaluation }
 
 class HomepageScreen extends StatefulWidget {
   const HomepageScreen({super.key});
@@ -23,6 +27,7 @@ class _HomepageScreenState extends State<HomepageScreen> {
   bool _isLoadingAlertVisible = false;
   int _currentPage = 1;
   String _driverName = 'Driver';
+  _DrawerSection _selectedSection = _DrawerSection.home;
 
   @override
   void initState() {
@@ -135,6 +140,20 @@ class _HomepageScreenState extends State<HomepageScreen> {
     });
   }
 
+  void _selectSection(_DrawerSection section) {
+    Navigator.of(context).pop();
+    if (_selectedSection == section) {
+      return;
+    }
+
+    setState(() {
+      _selectedSection = section;
+      if (section == _DrawerSection.home) {
+        _currentPage = 1;
+      }
+    });
+  }
+
   void _showLoadingAlert(String text) {
     if (!mounted || _isLoadingAlertVisible) {
       return;
@@ -168,7 +187,7 @@ class _HomepageScreenState extends State<HomepageScreen> {
 
     await QuickAlert.show(
       context: context,
-      type: QuickAlertType.confirm,
+      type: QuickAlertType.info,
       title: 'Logout',
       text: 'Are you sure you want to logout?',
       confirmBtnText: 'Logout',
@@ -305,6 +324,12 @@ class _HomepageScreenState extends State<HomepageScreen> {
         final filteredTickets = _filteredTickets(provider.tickets);
         final visibleTickets = _visibleTickets(filteredTickets);
         final hasMore = visibleTickets.length < filteredTickets.length;
+        final isHomeView = _selectedSection == _DrawerSection.home;
+        final appBarTitle = switch (_selectedSection) {
+          _DrawerSection.home => 'Driver Dashboard',
+          _DrawerSection.monthlyReport => 'Monthly Official Travel Report',
+          _DrawerSection.driverEvaluation => 'Driver Evaluation Report',
+        };
 
         return Scaffold(
           backgroundColor: const Color(0xFFF4F8FC),
@@ -312,48 +337,50 @@ class _HomepageScreenState extends State<HomepageScreen> {
             backgroundColor: const Color(0xFF0B395D),
             foregroundColor: Colors.white,
             elevation: 0,
-            title: const Text(
-              'Driver Dashboard',
-              style: TextStyle(fontWeight: FontWeight.w700),
+            title: Text(
+              appBarTitle,
+              style: const TextStyle(fontWeight: FontWeight.w700),
             ),
             actions: [
-              IconButton(
-                onPressed: () => _showNotificationCenter(provider),
-                icon: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    const Icon(Icons.notifications_none_rounded, size: 28),
-                    if (provider.unreadNotifications > 0)
-                      Positioned(
-                        right: -5,
-                        top: -5,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 5,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.redAccent,
-                            borderRadius: BorderRadius.circular(11),
-                          ),
-                          constraints: const BoxConstraints(minWidth: 18),
-                          child: Text(
-                            provider.unreadNotifications > 99
-                                ? '99+'
-                                : provider.unreadNotifications.toString(),
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
+              if (isHomeView) ...[
+                IconButton(
+                  onPressed: () => _showNotificationCenter(provider),
+                  icon: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      const Icon(Icons.notifications_none_rounded, size: 28),
+                      if (provider.unreadNotifications > 0)
+                        Positioned(
+                          right: -5,
+                          top: -5,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 5,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.redAccent,
+                              borderRadius: BorderRadius.circular(11),
+                            ),
+                            constraints: const BoxConstraints(minWidth: 18),
+                            child: Text(
+                              provider.unreadNotifications > 99
+                                  ? '99+'
+                                  : provider.unreadNotifications.toString(),
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(width: 6),
+                const SizedBox(width: 6),
+              ],
             ],
           ),
           drawer: Drawer(
@@ -363,13 +390,7 @@ class _HomepageScreenState extends State<HomepageScreen> {
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.fromLTRB(16, 20, 16, 20),
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [Color(0xFF0D4C73), Color(0xFF1F6F9E)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                    ),
+                    color: const Color(0xFF0B395D),
                     child: Row(
                       children: [
                         CircleAvatar(
@@ -414,10 +435,44 @@ class _HomepageScreenState extends State<HomepageScreen> {
                       ],
                     ),
                   ),
-                  ListTile(
-                    leading: const Icon(Icons.home_outlined),
-                    title: const Text('Home'),
-                    onTap: () => Navigator.of(context).pop(),
+                  Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: ListTile(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      leading:  Icon(Icons.home_outlined, color: _selectedSection == _DrawerSection.home ? Colors.white : Colors.black),
+                      title:  Text('Home', style: TextStyle(color: _selectedSection == _DrawerSection.home ? Colors.white : Colors.black),),
+                      selected: _selectedSection == _DrawerSection.home,
+                      selectedTileColor: const Color(0xFF0B395D),
+                      selectedColor: const Color(0xFF0B395D),
+                      onTap: () => _selectSection(_DrawerSection.home),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: ListTile(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+
+                      leading:  Icon(Icons.assignment_outlined, color: _selectedSection == _DrawerSection.monthlyReport ? Colors.white : Colors.black),
+                      title:  Text('Monthly Travel Report', style: TextStyle(color: _selectedSection == _DrawerSection.monthlyReport ? Colors.white : Colors.black),),
+                      selected: _selectedSection == _DrawerSection.monthlyReport,
+                      selectedTileColor: const Color(0xFF0B395D),
+                      selectedColor: const Color(0xFF0B395D),
+                      onTap: () => _selectSection(_DrawerSection.monthlyReport),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: ListTile(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      leading:  Icon(Icons.assessment_outlined, color: _selectedSection == _DrawerSection.driverEvaluation ? Colors.white : Colors.black),
+                      title:  Text('Driver Evaluation Report', style: TextStyle(color: _selectedSection == _DrawerSection.driverEvaluation ? Colors.white : Colors.black ),),
+                      selected:
+                          _selectedSection == _DrawerSection.driverEvaluation,
+                      selectedTileColor: const Color(0xFF0B395D),
+                      selectedColor: const Color(0xFF0B395D),
+                      onTap:
+                          () => _selectSection(_DrawerSection.driverEvaluation),
+                    ),
                   ),
                   const Spacer(),
                   const Divider(height: 1),
@@ -436,168 +491,207 @@ class _HomepageScreenState extends State<HomepageScreen> {
               ),
             ),
           ),
-          body: Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFFF7FBFF), Color(0xFFEAF3FB)],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
+          body: _buildSelectedSectionBody(
+            provider: provider,
+            filteredTickets: filteredTickets,
+            visibleTickets: visibleTickets,
+            hasMore: hasMore,
+          ),
+          floatingActionButton:
+              isHomeView
+                  ? FloatingActionButton.extended(
+                    onPressed:
+                        provider.isBusy
+                            ? null
+                            : () async {
+                              await context.read<DttProvider>().manualRefresh();
+                            },
+                    backgroundColor: const Color(0xFF0D4C73),
+                    foregroundColor: Colors.white,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Refresh'),
+                  )
+                  : null,
+        );
+      },
+    );
+  }
+
+  Widget _buildSelectedSectionBody({
+    required DttProvider provider,
+    required List<Map<String, dynamic>> filteredTickets,
+    required List<Map<String, dynamic>> visibleTickets,
+    required bool hasMore,
+  }) {
+    switch (_selectedSection) {
+      case _DrawerSection.home:
+        return _buildHomeDashboardBody(
+          provider: provider,
+          filteredTickets: filteredTickets,
+          visibleTickets: visibleTickets,
+          hasMore: hasMore,
+        );
+      case _DrawerSection.monthlyReport:
+        return Container(
+          color: const Color(0xFFF7F9FC),
+          child: MonthlyOfficialTravelReportScreen(
+            tickets: provider.tickets,
+            assignedDriver: _driverName,
+            embedded: true,
+          ),
+        );
+      case _DrawerSection.driverEvaluation:
+        return const DriverEvaluationReportScreen(embedded: true);
+    }
+  }
+
+  Widget _buildHomeDashboardBody({
+    required DttProvider provider,
+    required List<Map<String, dynamic>> filteredTickets,
+    required List<Map<String, dynamic>> visibleTickets,
+    required bool hasMore,
+  }) {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFFF7FBFF), Color(0xFFEAF3FB)],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
+      ),
+      child: Column(
+        children: [
+          if (!provider.isOnline)
+            Container(
+              width: double.infinity,
+              color: const Color(0xFFFCE8D3),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: const Text(
+                'Offline mode: you can still open records and save offline entries.',
+                style: TextStyle(
+                  color: Color(0xFF8A5B00),
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
-            child: Column(
-              children: [
-                if (!provider.isOnline)
-                  Container(
-                    width: double.infinity,
-                    color: const Color(0xFFFCE8D3),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 10,
-                    ),
-                    child: const Text(
-                      'Offline mode: you can still open records and save offline entries.',
-                      style: TextStyle(
-                        color: Color(0xFF8A5B00),
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(16),
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFF0B395D), Color(0xFF1F6F9E)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.08),
-                          blurRadius: 16,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Daily Trip Ticket Overview',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        Row(
-                          children: [
-                            _metricChip(
-                              label: 'Total',
-                              value: provider.tickets.length.toString(),
-                            ),
-                            const SizedBox(width: 10),
-                            _metricChip(
-                              label: 'Filtered',
-                              value: filteredTickets.length.toString(),
-                            ),
-                            const SizedBox(width: 10),
-                            _metricChip(
-                              label:
-                                  provider.isSyncingPending
-                                      ? 'Syncing'
-                                      : 'Pending',
-                              value:
-                                  provider.isSyncingPending ? '...' : 'Ready',
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF0B395D), Color(0xFF1F6F9E)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
                 ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
-                  child: TextField(
-                    controller: _searchController,
-                    onChanged: (_) {
-                      setState(() {
-                        _currentPage = 1;
-                      });
-                    },
-                    decoration: InputDecoration(
-                      labelText: 'Search by TRF, destination, requestor',
-                      prefixIcon: const Icon(Icons.search),
-                      suffixIcon:
-                          _searchController.text.isEmpty
-                              ? null
-                              : IconButton(
-                                onPressed: () {
-                                  _searchController.clear();
-                                  setState(() {
-                                    _currentPage = 1;
-                                  });
-                                },
-                                icon: const Icon(Icons.close),
-                              ),
-                      filled: true,
-                      fillColor: Colors.white,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.08),
+                    blurRadius: 16,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Daily Trip Ticket Overview',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  const SizedBox(height: 10),
+                  Row(
                     children: [
-                      Text(
-                        'Showing ${visibleTickets.length} of ${filteredTickets.length}',
-                        style: const TextStyle(
-                          color: Color(0xFF3A4E5C),
-                          fontWeight: FontWeight.w600,
-                        ),
+                      _metricChip(
+                        label: 'Total',
+                        value: provider.tickets.length.toString(),
                       ),
-                      if (provider.isSyncingPending)
-                        const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
+                      const SizedBox(width: 10),
+                      _metricChip(
+                        label: 'Filtered',
+                        value: filteredTickets.length.toString(),
+                      ),
+                      const SizedBox(width: 10),
+                      _metricChip(
+                        label:
+                            provider.isSyncingPending ? 'Syncing' : 'Pending',
+                        value: provider.isSyncingPending ? '...' : 'Ready',
+                      ),
                     ],
                   ),
+                ],
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+            child: TextField(
+              controller: _searchController,
+              onChanged: (_) {
+                setState(() {
+                  _currentPage = 1;
+                });
+              },
+              decoration: InputDecoration(
+                labelText: 'Search by TRF, destination, requestor',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon:
+                    _searchController.text.isEmpty
+                        ? null
+                        : IconButton(
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() {
+                              _currentPage = 1;
+                            });
+                          },
+                          icon: const Icon(Icons.close),
+                        ),
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
                 ),
-                Expanded(
-                  child: _buildTicketSection(
-                    provider: provider,
-                    filteredTickets: filteredTickets,
-                    visibleTickets: visibleTickets,
-                    hasMore: hasMore,
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Showing ${visibleTickets.length} of ${filteredTickets.length}',
+                  style: const TextStyle(
+                    color: Color(0xFF3A4E5C),
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
+                if (provider.isSyncingPending)
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
               ],
             ),
           ),
-          floatingActionButton: FloatingActionButton.extended(
-            onPressed:
-                provider.isBusy
-                    ? null
-                    : () async {
-                      await context.read<DttProvider>().manualRefresh();
-                    },
-            backgroundColor: const Color(0xFF0D4C73),
-            foregroundColor: Colors.white,
-            icon: const Icon(Icons.refresh),
-            label: const Text('Refresh'),
+          Expanded(
+            child: _buildTicketSection(
+              provider: provider,
+              filteredTickets: filteredTickets,
+              visibleTickets: visibleTickets,
+              hasMore: hasMore,
+            ),
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 
