@@ -187,6 +187,100 @@ class _MonthlyOfficialTravelReportScreenState
     return null;
   }
 
+  List<String> _splitPlateValues(dynamic rawValue) {
+    final text = rawValue?.toString().trim() ?? '';
+    if (text.isEmpty) {
+      return const [];
+    }
+
+    final parts =
+        text
+            .split(RegExp(r'[,;/|\n]+'))
+            .map((part) => part.trim())
+            .where((part) => part.isNotEmpty)
+            .toList();
+
+    if (parts.isEmpty) {
+      return [text];
+    }
+
+    return parts;
+  }
+
+  String _normalizePlate(String value) {
+    return value.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
+  }
+
+  List<String> _plateCandidatesFromTicket(Map<String, dynamic> ticket) {
+    final requestFormData = _asStringMap(ticket['request_form_data']);
+
+    final sources = [
+      requestFormData['vehicle_plate_no'],
+      requestFormData['vehicle_plate'],
+      requestFormData['plate_no'],
+      ticket['vehicle_plate_no'],
+      ticket['vehicle_plate'],
+      ticket['plate_no'],
+      requestFormData['vehicle_id'],
+      ticket['vehicle_id'],
+    ];
+
+    final candidates = <String>[];
+    for (final source in sources) {
+      candidates.addAll(_splitPlateValues(source));
+    }
+    return candidates;
+  }
+
+  String? _primaryVehiclePlate(List<Map<String, dynamic>> tickets) {
+    final counts = <String, int>{};
+    final displayByNormalized = <String, String>{};
+
+    for (final ticket in tickets) {
+      for (final candidate in _plateCandidatesFromTicket(ticket)) {
+        final normalized = _normalizePlate(candidate);
+        if (normalized.isEmpty) {
+          continue;
+        }
+        counts[normalized] = (counts[normalized] ?? 0) + 1;
+        displayByNormalized.putIfAbsent(normalized, () => candidate);
+      }
+    }
+
+    if (counts.isEmpty) {
+      return null;
+    }
+
+    final sortedEntries =
+        counts.entries.toList()..sort((a, b) {
+          final countCompare = b.value.compareTo(a.value);
+          if (countCompare != 0) {
+            return countCompare;
+          }
+          return a.key.compareTo(b.key);
+        });
+
+    final selectedNormalized = sortedEntries.first.key;
+    return displayByNormalized[selectedNormalized];
+  }
+
+  bool _ticketMatchesPlate(
+    Map<String, dynamic> ticket,
+    String normalizedPlate,
+  ) {
+    if (normalizedPlate.isEmpty) {
+      return true;
+    }
+
+    for (final candidate in _plateCandidatesFromTicket(ticket)) {
+      if (_normalizePlate(candidate) == normalizedPlate) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   String _formatMonth(DateTime month) {
     return '${_monthNames[month.month - 1]} ${month.year}';
   }
@@ -250,7 +344,12 @@ class _MonthlyOfficialTravelReportScreenState
         gasoline: _firstNumber(ticket, ['gasoline_liters', 'gasoline']),
         engineOil: _firstNumber(ticket, ['engine_oil_liters']),
         gearOil: _firstNumber(ticket, ['gear_oil_liters']),
-        brakeFluid: _firstNumber(ticket, ['brake_fluid_liters', 'brake_fluid']),
+        fuelBalanceBefore: _firstNumber(ticket, [
+          'fuel_balance_before',
+          'bf',
+          'brake_fluid_liters',
+          'brake_fluid',
+        ]),
         grease: _firstNumber(ticket, ['grease_kgs']),
         purchasedIssued: _normalizeReportText(
           _firstNonEmptyText([
@@ -290,7 +389,7 @@ class _MonthlyOfficialTravelReportScreenState
             gasoline: null,
             engineOil: null,
             gearOil: null,
-            brakeFluid: null,
+            fuelBalanceBefore: null,
             grease: null,
             purchasedIssued: '—',
             passenger: '—',
@@ -308,7 +407,7 @@ class _MonthlyOfficialTravelReportScreenState
           gasoline: aggregate.gasoline,
           engineOil: aggregate.engineOil,
           gearOil: aggregate.gearOil,
-          brakeFluid: aggregate.brakeFluid,
+          fuelBalanceBefore: aggregate.fuelBalanceBefore,
           grease: aggregate.grease,
           purchasedIssued: _mergeReportText(aggregate.purchasedIssuedValues),
           passenger: _mergeReportText(aggregate.passengerValues),
@@ -386,7 +485,7 @@ class _MonthlyOfficialTravelReportScreenState
         row.gasoline != null ||
         row.engineOil != null ||
         row.gearOil != null ||
-        row.brakeFluid != null ||
+        row.fuelBalanceBefore != null ||
         row.grease != null ||
         row.purchasedIssued != '—' ||
         row.passenger != '—' ||
@@ -452,7 +551,7 @@ class _MonthlyOfficialTravelReportScreenState
 
   Widget _dailyMetricChip({required String label, required String value}) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: const Color(0xFFF4F8FC),
         borderRadius: BorderRadius.circular(10),
@@ -602,8 +701,8 @@ class _MonthlyOfficialTravelReportScreenState
           ),
           const SizedBox(height: 10),
           Wrap(
-            spacing: 8,
-            runSpacing: 8,
+            spacing: 12,
+            runSpacing: 12,
             children: [
               _dailyMetricChip(
                 label: 'Distance',
@@ -626,8 +725,8 @@ class _MonthlyOfficialTravelReportScreenState
                 value: _formatNumber(row.gearOil),
               ),
               _dailyMetricChip(
-                label: 'Brake Fluid',
-                value: _formatNumber(row.brakeFluid),
+                label: 'Fuel Balance Before',
+                value: _formatNumber(row.fuelBalanceBefore),
               ),
               _dailyMetricChip(
                 label: 'Grease',
@@ -651,7 +750,7 @@ class _MonthlyOfficialTravelReportScreenState
     required num totalGasoline,
     required num totalEngineOil,
     required num totalGearOil,
-    required num totalBrakeFluid,
+    required num totalFuelBalanceBefore,
     required num totalGrease,
   }) {
     final rowsWithData = rows.where(_hasTripData).toList();
@@ -834,8 +933,8 @@ class _MonthlyOfficialTravelReportScreenState
                 icon: Icons.build_circle_outlined,
               ),
               _summaryMetricTile(
-                label: 'Brake Fluid',
-                value: _formatNumber(totalBrakeFluid),
+                label: 'Fuel Balance Before',
+                value: _formatNumber(totalFuelBalanceBefore),
                 icon: Icons.settings_input_component_outlined,
               ),
               _summaryMetricTile(
@@ -899,17 +998,31 @@ class _MonthlyOfficialTravelReportScreenState
   @override
   Widget build(BuildContext context) {
     final monthTickets = _ticketsForSelectedMonth();
-    final rows = _buildRows(monthTickets);
+    final resolvedVehiclePlate = _primaryVehiclePlate(monthTickets);
+    final normalizedResolvedPlate = _normalizePlate(resolvedVehiclePlate ?? '');
+    final monthVehicleTickets =
+        normalizedResolvedPlate.isEmpty
+            ? monthTickets
+            : monthTickets
+                .where(
+                  (ticket) =>
+                      _ticketMatchesPlate(ticket, normalizedResolvedPlate),
+                )
+                .toList();
+    final rows = _buildRows(monthVehicleTickets);
 
     final metadataTicket =
-        monthTickets.isNotEmpty
-            ? monthTickets.first
-            : (widget.tickets.isNotEmpty
-                ? widget.tickets.first
-                : const <String, dynamic>{});
+        monthVehicleTickets.isNotEmpty
+            ? monthVehicleTickets.first
+            : (monthTickets.isNotEmpty
+                ? monthTickets.first
+                : (widget.tickets.isNotEmpty
+                    ? widget.tickets.first
+                    : const <String, dynamic>{}));
+
     final requestData = _asStringMap(metadataTicket['request_form_data']);
 
-    final vehiclePlate =
+    final fallbackVehiclePlate =
         _firstNonEmptyText([
           requestData['vehicle_plate_no'],
           requestData['vehicle_plate'],
@@ -919,6 +1032,8 @@ class _MonthlyOfficialTravelReportScreenState
           metadataTicket['vehicle_plate_no'],
         ]) ??
         '—';
+
+    final vehiclePlate = resolvedVehiclePlate ?? fallbackVehiclePlate;
 
     final assignedDriver =
         _firstNonEmptyText([
@@ -939,7 +1054,7 @@ class _MonthlyOfficialTravelReportScreenState
     final totalGasoline = _sumBy(rows, (row) => row.gasoline);
     final totalEngineOil = _sumBy(rows, (row) => row.engineOil);
     final totalGearOil = _sumBy(rows, (row) => row.gearOil);
-    final totalBrakeFluid = _sumBy(rows, (row) => row.brakeFluid);
+    final totalFuelBalanceBefore = _sumBy(rows, (row) => row.fuelBalanceBefore);
     final totalGrease = _sumBy(rows, (row) => row.grease);
 
     final content = SafeArea(
@@ -1061,7 +1176,7 @@ class _MonthlyOfficialTravelReportScreenState
               totalGasoline: totalGasoline,
               totalEngineOil: totalEngineOil,
               totalGearOil: totalGearOil,
-              totalBrakeFluid: totalBrakeFluid,
+              totalFuelBalanceBefore: totalFuelBalanceBefore,
               totalGrease: totalGrease,
             ),
             const SizedBox(height: 18),
@@ -1238,7 +1353,7 @@ class _ReportRow {
     required this.gasoline,
     required this.engineOil,
     required this.gearOil,
-    required this.brakeFluid,
+    required this.fuelBalanceBefore,
     required this.grease,
     required this.purchasedIssued,
     required this.passenger,
@@ -1251,7 +1366,7 @@ class _ReportRow {
   final num? gasoline;
   final num? engineOil;
   final num? gearOil;
-  final num? brakeFluid;
+  final num? fuelBalanceBefore;
   final num? grease;
   final String purchasedIssued;
   final String passenger;
@@ -1264,7 +1379,7 @@ class _ReportDayAggregate {
   num? gasoline;
   num? engineOil;
   num? gearOil;
-  num? brakeFluid;
+  num? fuelBalanceBefore;
   num? grease;
 
   final Set<String> purchasedIssuedValues = <String>{};
@@ -1277,7 +1392,7 @@ class _ReportDayAggregate {
     required num? gasoline,
     required num? engineOil,
     required num? gearOil,
-    required num? brakeFluid,
+    required num? fuelBalanceBefore,
     required num? grease,
     required String purchasedIssued,
     required String passenger,
@@ -1288,7 +1403,10 @@ class _ReportDayAggregate {
     this.gasoline = _sumNullable(this.gasoline, gasoline);
     this.engineOil = _sumNullable(this.engineOil, engineOil);
     this.gearOil = _sumNullable(this.gearOil, gearOil);
-    this.brakeFluid = _sumNullable(this.brakeFluid, brakeFluid);
+    this.fuelBalanceBefore = _sumNullable(
+      this.fuelBalanceBefore,
+      fuelBalanceBefore,
+    );
     this.grease = _sumNullable(this.grease, grease);
 
     if (purchasedIssued.isNotEmpty) {

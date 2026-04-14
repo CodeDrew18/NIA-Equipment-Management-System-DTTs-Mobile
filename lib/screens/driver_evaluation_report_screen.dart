@@ -256,8 +256,6 @@ class _DriverEvaluationReportScreenState
       final request = _asStringMap(evaluation['request']);
       final values = [
         evaluation['id']?.toString() ?? '',
-        evaluation['copy_key']?.toString() ?? '',
-        evaluation['copy_number']?.toString() ?? '',
         evaluation['evaluator_name']?.toString() ?? '',
         request['destination']?.toString() ?? '',
         request['vehicle_id']?.toString() ?? '',
@@ -383,7 +381,7 @@ class _DriverEvaluationReportScreenState
             controller: _searchController,
             onChanged: (_) => setState(() {}),
             decoration: InputDecoration(
-              labelText: 'Search by destination, evaluator, copy key, vehicle',
+              labelText: 'Search by destination, evaluator, vehicle',
               prefixIcon: const Icon(Icons.search),
               suffixIcon:
                   _searchController.text.isEmpty
@@ -557,14 +555,6 @@ class _DriverEvaluationReportScreenState
                     'Evaluated At: $evaluatedAt',
                     style: const TextStyle(color: Color(0xFF4B5F6F)),
                   ),
-                  if ((item['copy_key']?.toString().trim().isNotEmpty ?? false))
-                    Padding(
-                      padding: const EdgeInsets.only(top: 2),
-                      child: Text(
-                        'Copy Key: ${item['copy_key']}',
-                        style: const TextStyle(color: Color(0xFF4B5F6F)),
-                      ),
-                    ),
                   const SizedBox(height: 10),
                   Row(
                     children: [
@@ -957,7 +947,6 @@ class _EvaluationDetailSheet extends StatelessWidget {
               const SizedBox(height: 8),
               _KeyValueTable(
                 rows: [
-                  ('Form ID', _valueText(request['form_id'])),
                   ('Destination', _valueText(request['destination'])),
                   ('Vehicle ID', _valueText(request['vehicle_id'])),
                   ('Vehicle Type', _valueText(request['vehicle_type'])),

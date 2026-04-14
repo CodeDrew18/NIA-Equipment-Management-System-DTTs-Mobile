@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:ems/auth/login_page_screen.dart';
 import 'package:ems/providers/dtt_provider.dart';
 import 'package:ems/screens/driver_evaluation_report_screen.dart';
@@ -10,7 +12,12 @@ import 'package:provider/provider.dart';
 import 'package:quickalert/quickalert.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-enum _DrawerSection { home, monthlyReport, driverEvaluation }
+enum _DrawerSection {
+  dashboard,
+  dailyTripTicket,
+  monthlyReport,
+  driverEvaluation,
+}
 
 class HomepageScreen extends StatefulWidget {
   const HomepageScreen({super.key});
@@ -27,7 +34,8 @@ class _HomepageScreenState extends State<HomepageScreen> {
   bool _isLoadingAlertVisible = false;
   int _currentPage = 1;
   String _driverName = 'Driver';
-  _DrawerSection _selectedSection = _DrawerSection.home;
+  bool _hasResolvedDriverName = false;
+  _DrawerSection _selectedSection = _DrawerSection.dashboard;
 
   @override
   void initState() {
@@ -40,9 +48,13 @@ class _HomepageScreenState extends State<HomepageScreen> {
         return;
       }
 
+      await _loadDriverName();
+      if (!mounted) {
+        return;
+      }
+
       await FcmService.instance.syncTokenWithBackend();
       await provider.start();
-      await _loadDriverName();
     });
   }
 
@@ -55,12 +67,15 @@ class _HomepageScreenState extends State<HomepageScreen> {
   Future<void> _loadDriverName() async {
     final prefs = await SharedPreferences.getInstance();
     final name = prefs.getString('driver_name')?.trim() ?? '';
-    if (!mounted || name.isEmpty) {
+    if (!mounted) {
       return;
     }
 
     setState(() {
-      _driverName = name;
+      if (name.isNotEmpty) {
+        _driverName = name;
+      }
+      _hasResolvedDriverName = true;
     });
   }
 
@@ -85,6 +100,121 @@ class _HomepageScreenState extends State<HomepageScreen> {
 
   String _normalizeSearch(String value) {
     return value.trim().toLowerCase();
+  }
+
+  String _normalizeNameForMatch(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9\s]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  List<String> _splitDriverCandidates(String rawValue) {
+    final value = rawValue.trim();
+    if (value.isEmpty) {
+      return const <String>[];
+    }
+
+    final parts =
+        value
+            .split(RegExp(r'[,;/|\n]+'))
+            .map((part) => part.trim())
+            .where((part) => part.isNotEmpty)
+            .toList();
+
+    if (parts.isEmpty) {
+      return <String>[value];
+    }
+
+    return parts;
+  }
+
+  String _ticketIdentityKey(Map<String, dynamic> ticket) {
+    final trfId =
+        ticket['transportation_request_form_id']?.toString().trim() ?? '';
+    if (trfId.isNotEmpty) {
+      return 'trf-$trfId';
+    }
+
+    final dttId = ticket['id']?.toString().trim() ?? '';
+    if (dttId.isNotEmpty) {
+      return 'dtt-$dttId';
+    }
+
+    final requestFormData = _asStringDynamicMap(ticket['request_form_data']);
+    final requestId = requestFormData['id']?.toString().trim() ?? '';
+    if (requestId.isNotEmpty) {
+      return 'req-$requestId';
+    }
+
+    return '';
+  }
+
+  bool _matchesAssignedDriverName(String candidate, String normalizedDriver) {
+    final normalizedCandidate = _normalizeNameForMatch(candidate);
+    if (normalizedCandidate.isEmpty) {
+      return false;
+    }
+
+    if (normalizedCandidate == normalizedDriver) {
+      return true;
+    }
+
+    final splitCandidates = _splitDriverCandidates(candidate);
+    if (splitCandidates.length <= 1) {
+      return false;
+    }
+
+    return splitCandidates.any(
+      (name) => _normalizeNameForMatch(name) == normalizedDriver,
+    );
+  }
+
+  List<Map<String, dynamic>> _ticketsForLoggedInDriver(
+    List<Map<String, dynamic>> tickets,
+  ) {
+    if (!_hasResolvedDriverName) {
+      return const <Map<String, dynamic>>[];
+    }
+
+    final normalizedDriver = _normalizeNameForMatch(_driverName);
+    if (normalizedDriver.isEmpty || normalizedDriver == 'driver') {
+      return const <Map<String, dynamic>>[];
+    }
+
+    final matchedTickets =
+        tickets.where((ticket) {
+          final requestFormData = _asStringDynamicMap(
+            ticket['request_form_data'],
+          );
+          final nameCandidates = <String>[
+            requestFormData['driver_name']?.toString() ?? '',
+            requestFormData['assigned_driver']?.toString() ?? '',
+            requestFormData['driver']?.toString() ?? '',
+            requestFormData['drivers']?.toString() ?? '',
+            ticket['driver_name']?.toString() ?? '',
+            ticket['assigned_driver']?.toString() ?? '',
+            ticket['driver']?.toString() ?? '',
+          ];
+
+          return nameCandidates.any(
+            (candidate) =>
+                _matchesAssignedDriverName(candidate, normalizedDriver),
+          );
+        }).toList();
+
+    final seenKeys = <String>{};
+    final uniqueTickets = <Map<String, dynamic>>[];
+
+    for (final ticket in matchedTickets) {
+      final key = _ticketIdentityKey(ticket);
+      if (key.isEmpty || seenKeys.add(key)) {
+        uniqueTickets.add(ticket);
+      }
+    }
+
+    return uniqueTickets;
   }
 
   Map<String, dynamic> _asStringDynamicMap(dynamic rawValue) {
@@ -148,7 +278,7 @@ class _HomepageScreenState extends State<HomepageScreen> {
 
     setState(() {
       _selectedSection = section;
-      if (section == _DrawerSection.home) {
+      if (section == _DrawerSection.dailyTripTicket) {
         _currentPage = 1;
       }
     });
@@ -321,12 +451,19 @@ class _HomepageScreenState extends State<HomepageScreen> {
   Widget build(BuildContext context) {
     return Consumer<DttProvider>(
       builder: (context, provider, _) {
-        final filteredTickets = _filteredTickets(provider.tickets);
-        final visibleTickets = _visibleTickets(filteredTickets);
-        final hasMore = visibleTickets.length < filteredTickets.length;
-        final isHomeView = _selectedSection == _DrawerSection.home;
+        final driverTickets = _ticketsForLoggedInDriver(provider.tickets);
+        final filteredTickets = _filteredTickets(driverTickets);
+        final visibleTickets = filteredTickets;
+        final hasMore = false;
+        final showNotificationAction =
+            _selectedSection == _DrawerSection.dashboard ||
+            _selectedSection == _DrawerSection.dailyTripTicket;
+        final showRefreshFab =
+            _selectedSection == _DrawerSection.dashboard ||
+            _selectedSection == _DrawerSection.dailyTripTicket;
         final appBarTitle = switch (_selectedSection) {
-          _DrawerSection.home => 'Driver Dashboard',
+          _DrawerSection.dashboard => 'Driver Dashboard',
+          _DrawerSection.dailyTripTicket => 'Daily Driver\'s Trip Ticket',
           _DrawerSection.monthlyReport => 'Monthly Official Travel Report',
           _DrawerSection.driverEvaluation => 'Driver Evaluation Report',
         };
@@ -342,7 +479,7 @@ class _HomepageScreenState extends State<HomepageScreen> {
               style: const TextStyle(fontWeight: FontWeight.w700),
             ),
             actions: [
-              if (isHomeView) ...[
+              if (showNotificationAction) ...[
                 IconButton(
                   onPressed: () => _showNotificationCenter(provider),
                   icon: Stack(
@@ -438,23 +575,86 @@ class _HomepageScreenState extends State<HomepageScreen> {
                   Padding(
                     padding: const EdgeInsets.all(8.0),
                     child: ListTile(
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      leading:  Icon(Icons.home_outlined, color: _selectedSection == _DrawerSection.home ? Colors.white : Colors.black),
-                      title:  Text('Home', style: TextStyle(color: _selectedSection == _DrawerSection.home ? Colors.white : Colors.black),),
-                      selected: _selectedSection == _DrawerSection.home,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      leading: Icon(
+                        Icons.home_outlined,
+                        color:
+                            _selectedSection == _DrawerSection.dashboard
+                                ? Colors.white
+                                : Colors.black,
+                      ),
+                      title: Text(
+                        'Dashboard',
+                        style: TextStyle(
+                          color:
+                              _selectedSection == _DrawerSection.dashboard
+                                  ? Colors.white
+                                  : Colors.black,
+                        ),
+                      ),
+                      selected: _selectedSection == _DrawerSection.dashboard,
                       selectedTileColor: const Color(0xFF0B395D),
                       selectedColor: const Color(0xFF0B395D),
-                      onTap: () => _selectSection(_DrawerSection.home),
+                      onTap: () => _selectSection(_DrawerSection.dashboard),
                     ),
                   ),
                   Padding(
                     padding: const EdgeInsets.all(8.0),
                     child: ListTile(
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      leading: Icon(
+                        Icons.local_shipping_outlined,
+                        color:
+                            _selectedSection == _DrawerSection.dailyTripTicket
+                                ? Colors.white
+                                : Colors.black,
+                      ),
+                      title: Text(
+                        'Daily Driver\'s Trip Ticket',
+                        style: TextStyle(
+                          color:
+                              _selectedSection == _DrawerSection.dailyTripTicket
+                                  ? Colors.white
+                                  : Colors.black,
+                        ),
+                      ),
+                      selected:
+                          _selectedSection == _DrawerSection.dailyTripTicket,
+                      selectedTileColor: const Color(0xFF0B395D),
+                      selectedColor: const Color(0xFF0B395D),
+                      onTap:
+                          () => _selectSection(_DrawerSection.dailyTripTicket),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: ListTile(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
 
-                      leading:  Icon(Icons.assignment_outlined, color: _selectedSection == _DrawerSection.monthlyReport ? Colors.white : Colors.black),
-                      title:  Text('Monthly Travel Report', style: TextStyle(color: _selectedSection == _DrawerSection.monthlyReport ? Colors.white : Colors.black),),
-                      selected: _selectedSection == _DrawerSection.monthlyReport,
+                      leading: Icon(
+                        Icons.assignment_outlined,
+                        color:
+                            _selectedSection == _DrawerSection.monthlyReport
+                                ? Colors.white
+                                : Colors.black,
+                      ),
+                      title: Text(
+                        'Monthly Travel Report',
+                        style: TextStyle(
+                          color:
+                              _selectedSection == _DrawerSection.monthlyReport
+                                  ? Colors.white
+                                  : Colors.black,
+                        ),
+                      ),
+                      selected:
+                          _selectedSection == _DrawerSection.monthlyReport,
                       selectedTileColor: const Color(0xFF0B395D),
                       selectedColor: const Color(0xFF0B395D),
                       onTap: () => _selectSection(_DrawerSection.monthlyReport),
@@ -463,9 +663,26 @@ class _HomepageScreenState extends State<HomepageScreen> {
                   Padding(
                     padding: const EdgeInsets.all(8.0),
                     child: ListTile(
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      leading:  Icon(Icons.assessment_outlined, color: _selectedSection == _DrawerSection.driverEvaluation ? Colors.white : Colors.black),
-                      title:  Text('Driver Evaluation Report', style: TextStyle(color: _selectedSection == _DrawerSection.driverEvaluation ? Colors.white : Colors.black ),),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      leading: Icon(
+                        Icons.assessment_outlined,
+                        color:
+                            _selectedSection == _DrawerSection.driverEvaluation
+                                ? Colors.white
+                                : Colors.black,
+                      ),
+                      title: Text(
+                        'Driver Evaluation Report',
+                        style: TextStyle(
+                          color:
+                              _selectedSection ==
+                                      _DrawerSection.driverEvaluation
+                                  ? Colors.white
+                                  : Colors.black,
+                        ),
+                      ),
                       selected:
                           _selectedSection == _DrawerSection.driverEvaluation,
                       selectedTileColor: const Color(0xFF0B395D),
@@ -493,12 +710,13 @@ class _HomepageScreenState extends State<HomepageScreen> {
           ),
           body: _buildSelectedSectionBody(
             provider: provider,
+            driverTickets: driverTickets,
             filteredTickets: filteredTickets,
             visibleTickets: visibleTickets,
             hasMore: hasMore,
           ),
           floatingActionButton:
-              isHomeView
+              showRefreshFab
                   ? FloatingActionButton.extended(
                     onPressed:
                         provider.isBusy
@@ -519,14 +737,21 @@ class _HomepageScreenState extends State<HomepageScreen> {
 
   Widget _buildSelectedSectionBody({
     required DttProvider provider,
+    required List<Map<String, dynamic>> driverTickets,
     required List<Map<String, dynamic>> filteredTickets,
     required List<Map<String, dynamic>> visibleTickets,
     required bool hasMore,
   }) {
     switch (_selectedSection) {
-      case _DrawerSection.home:
+      case _DrawerSection.dashboard:
+        return _buildDashboardSummaryBody(
+          provider: provider,
+          driverTickets: driverTickets,
+        );
+      case _DrawerSection.dailyTripTicket:
         return _buildHomeDashboardBody(
           provider: provider,
+          driverTickets: driverTickets,
           filteredTickets: filteredTickets,
           visibleTickets: visibleTickets,
           hasMore: hasMore,
@@ -535,7 +760,7 @@ class _HomepageScreenState extends State<HomepageScreen> {
         return Container(
           color: const Color(0xFFF7F9FC),
           child: MonthlyOfficialTravelReportScreen(
-            tickets: provider.tickets,
+            tickets: driverTickets,
             assignedDriver: _driverName,
             embedded: true,
           ),
@@ -545,8 +770,572 @@ class _HomepageScreenState extends State<HomepageScreen> {
     }
   }
 
+  DateTime? _parseTicketDate(dynamic rawValue) {
+    final value = rawValue?.toString().trim() ?? '';
+    if (value.isEmpty) {
+      return null;
+    }
+
+    return DateTime.tryParse(value);
+  }
+
+  DateTime? _ticketDate(Map<String, dynamic> ticket) {
+    final requestFormData = _asStringDynamicMap(ticket['request_form_data']);
+    final candidates = [
+      ticket['departure_time'],
+      ticket['arrival_time_destination'],
+      ticket['arrival_time_office'],
+      ticket['created_at'],
+      requestFormData['departure_time'],
+      requestFormData['date_of_travel'],
+      requestFormData['travel_date'],
+      requestFormData['created_at'],
+    ];
+
+    for (final candidate in candidates) {
+      final parsed = _parseTicketDate(candidate);
+      if (parsed != null) {
+        return parsed;
+      }
+    }
+
+    return null;
+  }
+
+  String _ticketStatusBucket(Map<String, dynamic> ticket) {
+    final requestFormData = _asStringDynamicMap(ticket['request_form_data']);
+    final rawStatus =
+        requestFormData['status']?.toString() ??
+        ticket['status']?.toString() ??
+        '';
+    final status = rawStatus.trim().toLowerCase();
+
+    if (status.contains('complete') ||
+        status.contains('approved') ||
+        status.contains('done')) {
+      return 'Completed';
+    }
+
+    if (status.contains('cancel') || status.contains('reject')) {
+      return 'Cancelled';
+    }
+
+    if (status.contains('transit') ||
+        status.contains('travel') ||
+        status.contains('ongoing')) {
+      return 'In Transit';
+    }
+
+    return 'Pending';
+  }
+
+  int _todayTicketCount(List<Map<String, dynamic>> tickets) {
+    final now = DateTime.now();
+    return tickets.where((ticket) {
+      final date = _ticketDate(ticket);
+      if (date == null) {
+        return false;
+      }
+
+      return date.year == now.year &&
+          date.month == now.month &&
+          date.day == now.day;
+    }).length;
+  }
+
+  Map<String, int> _statusDistribution(List<Map<String, dynamic>> tickets) {
+    final counts = <String, int>{
+      'Completed': 0,
+      'Pending': 0,
+      'In Transit': 0,
+      'Cancelled': 0,
+    };
+
+    for (final ticket in tickets) {
+      final bucket = _ticketStatusBucket(ticket);
+      counts[bucket] = (counts[bucket] ?? 0) + 1;
+    }
+
+    return counts;
+  }
+
+  List<_MonthlyPoint> _monthlyPoints(
+    List<Map<String, dynamic>> tickets, {
+    int months = 6,
+  }) {
+    const monthNames = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+
+    final now = DateTime.now();
+    final monthStarts = List<DateTime>.generate(months, (index) {
+      final date = DateTime(now.year, now.month - (months - 1 - index), 1);
+      return DateTime(date.year, date.month, 1);
+    });
+
+    final counts = <String, int>{};
+    for (final monthStart in monthStarts) {
+      counts['${monthStart.year}-${monthStart.month}'] = 0;
+    }
+
+    for (final ticket in tickets) {
+      final date = _ticketDate(ticket);
+      if (date == null) {
+        continue;
+      }
+
+      final key = '${date.year}-${date.month}';
+      if (counts.containsKey(key)) {
+        counts[key] = (counts[key] ?? 0) + 1;
+      }
+    }
+
+    return monthStarts.map((monthStart) {
+      final key = '${monthStart.year}-${monthStart.month}';
+      final shortYear = monthStart.year.toString().substring(2);
+      final label = '${monthNames[monthStart.month - 1]} $shortYear';
+      return _MonthlyPoint(label: label, count: counts[key] ?? 0);
+    }).toList();
+  }
+
+  List<MapEntry<String, int>> _topDestinationCounts(
+    List<Map<String, dynamic>> tickets, {
+    int limit = 5,
+  }) {
+    final counts = <String, int>{};
+
+    for (final ticket in tickets) {
+      final requestFormData = _asStringDynamicMap(ticket['request_form_data']);
+      final destination =
+          requestFormData['destination']?.toString().trim() ?? '';
+      if (destination.isEmpty) {
+        continue;
+      }
+
+      counts[destination] = (counts[destination] ?? 0) + 1;
+    }
+
+    final sortedEntries =
+        counts.entries.toList()..sort((a, b) {
+          final byCount = b.value.compareTo(a.value);
+          if (byCount != 0) {
+            return byCount;
+          }
+          return a.key.compareTo(b.key);
+        });
+
+    if (sortedEntries.length <= limit) {
+      return sortedEntries;
+    }
+
+    return sortedEntries.sublist(0, limit);
+  }
+
+  Widget _buildDashboardSummaryBody({
+    required DttProvider provider,
+    required List<Map<String, dynamic>> driverTickets,
+  }) {
+    if (!_hasResolvedDriverName) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final statusCounts = _statusDistribution(driverTickets);
+    final completed = statusCounts['Completed'] ?? 0;
+    final pending = statusCounts['Pending'] ?? 0;
+    final inTransit = statusCounts['In Transit'] ?? 0;
+    final cancelled = statusCounts['Cancelled'] ?? 0;
+    final todayCount = _todayTicketCount(driverTickets);
+    final monthlyPoints = _monthlyPoints(driverTickets);
+    final topDestinations = _topDestinationCounts(driverTickets);
+
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFFF7FBFF), Color(0xFFEAF3FB)],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
+      ),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 90),
+        children: [
+          if (!provider.isOnline)
+            Container(
+              width: double.infinity,
+              color: const Color(0xFFFCE8D3),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: const Text(
+                'Offline mode: summaries may not include newly submitted server records yet.',
+                style: TextStyle(
+                  color: Color(0xFF8A5B00),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              gradient: const LinearGradient(
+                colors: [Color(0xFF0B395D), Color(0xFF1F6F9E)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.08),
+                  blurRadius: 16,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Dashboard Overview',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Driver: $_driverName',
+                  style: const TextStyle(
+                    color: Color(0xFFD0E7F8),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _dashboardMetricTile(
+                label: 'Total DTTs',
+                value: '${driverTickets.length}',
+                icon: Icons.assignment_outlined,
+                color: const Color(0xFF0B395D),
+              ),
+              _dashboardMetricTile(
+                label: 'Today Trips',
+                value: '$todayCount',
+                icon: Icons.today_outlined,
+                color: const Color(0xFF1E6EA0),
+              ),
+              _dashboardMetricTile(
+                label: 'Completed',
+                value: '$completed',
+                icon: Icons.check_circle_outline,
+                color: const Color(0xFF257041),
+              ),
+              _dashboardMetricTile(
+                label: 'Pending',
+                value: '$pending',
+                icon: Icons.pending_outlined,
+                color: const Color(0xFFB26A00),
+              ),
+              _dashboardMetricTile(
+                label: 'In Transit',
+                value: '$inTransit',
+                icon: Icons.local_shipping_outlined,
+                color: const Color(0xFF4B5F6F),
+              ),
+              _dashboardMetricTile(
+                label: 'Cancelled',
+                value: '$cancelled',
+                icon: Icons.cancel_outlined,
+                color: const Color(0xFF9C2D2D),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _dashboardSectionCard(
+            title: 'Trip Status Chart',
+            subtitle: 'Status distribution of your daily trip tickets.',
+            child: _statusChart(statusCounts),
+          ),
+          const SizedBox(height: 12),
+          _dashboardSectionCard(
+            title: 'Monthly Ticket Graph',
+            subtitle: 'Trip ticket volume for the last 6 months.',
+            child: _MonthlyTrendGraph(points: monthlyPoints),
+          ),
+          const SizedBox(height: 12),
+          _dashboardSectionCard(
+            title: 'Top Destinations Graph',
+            subtitle: 'Most frequent destinations based on your DTT records.',
+            child: _topDestinationGraph(topDestinations),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _dashboardMetricTile({
+    required String label,
+    required String value,
+    required IconData icon,
+    required Color color,
+  }) {
+    return Container(
+      width: 170,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFD6E3EC)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: color, size: 18),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF5A6D7D),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    color: Color(0xFF0F2E47),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _dashboardSectionCard({
+    required String title,
+    required String subtitle,
+    required Widget child,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFD6E3EC)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              color: Color(0xFF0F2E47),
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            style: const TextStyle(
+              color: Color(0xFF5A6D7D),
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 12),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _statusChart(Map<String, int> statusCounts) {
+    const order = ['Completed', 'Pending', 'In Transit', 'Cancelled'];
+    const colors = {
+      'Completed': Color(0xFF257041),
+      'Pending': Color(0xFFB26A00),
+      'In Transit': Color(0xFF1E6EA0),
+      'Cancelled': Color(0xFF9C2D2D),
+    };
+
+    final total = statusCounts.values.fold<int>(0, (sum, count) => sum + count);
+
+    return Column(
+      children:
+          order.map((status) {
+            final count = statusCounts[status] ?? 0;
+            final ratio = total == 0 ? 0.0 : count / total;
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 88,
+                    child: Text(
+                      status,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF3D5365),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(999),
+                      child: LinearProgressIndicator(
+                        minHeight: 12,
+                        value: ratio,
+                        backgroundColor: const Color(0xFFE7EEF4),
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          colors[status]!,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  SizedBox(
+                    width: 26,
+                    child: Text(
+                      '$count',
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(
+                        color: Color(0xFF0F2E47),
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+    );
+  }
+
+  Widget _topDestinationGraph(List<MapEntry<String, int>> destinations) {
+    if (destinations.isEmpty) {
+      return const Text(
+        'No destination data available yet.',
+        style: TextStyle(color: Color(0xFF5A6D7D), fontWeight: FontWeight.w600),
+      );
+    }
+
+    final maxCount = destinations
+        .map((entry) => entry.value)
+        .fold<int>(0, (maxValue, value) => math.max(maxValue, value));
+    final safeMaxCount = maxCount == 0 ? 1 : maxCount;
+
+    return Column(
+      children:
+          destinations.map((entry) {
+            final widthFactor = entry.value / safeMaxCount;
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 110,
+                    child: Text(
+                      entry.key,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF3D5365),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(999),
+                      child: Stack(
+                        children: [
+                          Container(height: 12, color: const Color(0xFFE7EEF4)),
+                          FractionallySizedBox(
+                            widthFactor: widthFactor,
+                            child: Container(
+                              height: 12,
+                              decoration: const BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    Color(0xFF0B395D),
+                                    Color(0xFF1F6F9E),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 24,
+                    child: Text(
+                      '${entry.value}',
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(
+                        color: Color(0xFF0F2E47),
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+    );
+  }
+
   Widget _buildHomeDashboardBody({
     required DttProvider provider,
+    required List<Map<String, dynamic>> driverTickets,
     required List<Map<String, dynamic>> filteredTickets,
     required List<Map<String, dynamic>> visibleTickets,
     required bool hasMore,
@@ -610,7 +1399,7 @@ class _HomepageScreenState extends State<HomepageScreen> {
                     children: [
                       _metricChip(
                         label: 'Total',
-                        value: provider.tickets.length.toString(),
+                        value: driverTickets.length.toString(),
                       ),
                       const SizedBox(width: 10),
                       _metricChip(
@@ -685,6 +1474,7 @@ class _HomepageScreenState extends State<HomepageScreen> {
           Expanded(
             child: _buildTicketSection(
               provider: provider,
+              driverTickets: driverTickets,
               filteredTickets: filteredTickets,
               visibleTickets: visibleTickets,
               hasMore: hasMore,
@@ -697,15 +1487,20 @@ class _HomepageScreenState extends State<HomepageScreen> {
 
   Widget _buildTicketSection({
     required DttProvider provider,
+    required List<Map<String, dynamic>> driverTickets,
     required List<Map<String, dynamic>> filteredTickets,
     required List<Map<String, dynamic>> visibleTickets,
     required bool hasMore,
   }) {
-    if (provider.isBusy && provider.tickets.isEmpty) {
+    if (!_hasResolvedDriverName) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (provider.errorMessage != null && provider.tickets.isEmpty) {
+    if (provider.isBusy && driverTickets.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (provider.errorMessage != null && driverTickets.isEmpty) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -718,14 +1513,20 @@ class _HomepageScreenState extends State<HomepageScreen> {
       );
     }
 
-    if (provider.tickets.isEmpty) {
-      return const Center(
+    if (driverTickets.isEmpty) {
+      final nameLabel = _driverName.trim();
+      final message =
+          nameLabel.isNotEmpty && nameLabel.toLowerCase() != 'driver'
+              ? 'No daily trip tickets found for $nameLabel yet.'
+              : 'No daily trip tickets found for your account yet.';
+
+      return Center(
         child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: 24),
+          padding: const EdgeInsets.symmetric(horizontal: 24),
           child: Text(
-            'No daily trip tickets found for your account yet.',
+            message,
             textAlign: TextAlign.center,
-            style: TextStyle(fontWeight: FontWeight.w600),
+            style: const TextStyle(fontWeight: FontWeight.w600),
           ),
         ),
       );
@@ -913,5 +1714,146 @@ class _HomepageScreenState extends State<HomepageScreen> {
         ),
       ),
     );
+  }
+}
+
+class _MonthlyPoint {
+  const _MonthlyPoint({required this.label, required this.count});
+
+  final String label;
+  final int count;
+}
+
+class _MonthlyTrendGraph extends StatelessWidget {
+  const _MonthlyTrendGraph({required this.points});
+
+  final List<_MonthlyPoint> points;
+
+  @override
+  Widget build(BuildContext context) {
+    final values = points.map((point) => point.count).toList(growable: false);
+
+    return Column(
+      children: [
+        SizedBox(
+          height: 190,
+          child: CustomPaint(
+            painter: _MonthlyTrendPainter(values: values),
+            child: const SizedBox.expand(),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children:
+              points.map((point) {
+                return Expanded(
+                  child: Column(
+                    children: [
+                      Text(
+                        point.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF5A6D7D),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${point.count}',
+                        style: const TextStyle(
+                          color: Color(0xFF0F2E47),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+        ),
+      ],
+    );
+  }
+}
+
+class _MonthlyTrendPainter extends CustomPainter {
+  _MonthlyTrendPainter({required this.values});
+
+  final List<int> values;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (values.isEmpty) {
+      return;
+    }
+
+    final gridPaint =
+        Paint()
+          ..color = const Color(0xFFE5EDF3)
+          ..strokeWidth = 1;
+
+    for (var i = 0; i < 4; i++) {
+      final y = (size.height / 3) * i;
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
+    }
+
+    final maxValue = values.fold<int>(
+      0,
+      (currentMax, value) => math.max(currentMax, value),
+    );
+    final safeMaxValue = maxValue == 0 ? 1 : maxValue;
+    final stepX = values.length == 1 ? 0.0 : size.width / (values.length - 1);
+
+    final points = <Offset>[];
+    for (var i = 0; i < values.length; i++) {
+      final normalized = values[i] / safeMaxValue;
+      final y = size.height - (normalized * (size.height - 18)) - 9;
+      points.add(Offset(i * stepX, y));
+    }
+
+    final linePath = Path()..moveTo(points.first.dx, points.first.dy);
+    for (var i = 1; i < points.length; i++) {
+      linePath.lineTo(points[i].dx, points[i].dy);
+    }
+
+    final areaPath =
+        Path.from(linePath)
+          ..lineTo(points.last.dx, size.height)
+          ..lineTo(points.first.dx, size.height)
+          ..close();
+
+    final areaPaint =
+        Paint()
+          ..shader = const LinearGradient(
+            colors: [Color(0x70226A9B), Color(0x10226A9B)],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ).createShader(Rect.fromLTWH(0, 0, size.width, size.height))
+          ..style = PaintingStyle.fill;
+
+    canvas.drawPath(areaPath, areaPaint);
+
+    final linePaint =
+        Paint()
+          ..color = const Color(0xFF1F6F9E)
+          ..strokeWidth = 3
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round;
+
+    canvas.drawPath(linePath, linePaint);
+
+    final dotFill = Paint()..color = const Color(0xFF1F6F9E);
+    final dotBorder = Paint()..color = Colors.white;
+
+    for (final point in points) {
+      canvas.drawCircle(point, 5, dotBorder);
+      canvas.drawCircle(point, 3.2, dotFill);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _MonthlyTrendPainter oldDelegate) {
+    return true;
   }
 }

@@ -63,9 +63,20 @@ class DttProvider extends ChangeNotifier {
 
     _pollingTimer?.cancel();
     _pollingTimer = Timer.periodic(const Duration(seconds: 25), (_) async {
-      if (_isOnline) {
-        await fetchTickets(isAutoRefresh: true);
+      final connectivityResult = await _connectivity.checkConnectivity();
+      final currentlyOnline = _hasConnection(connectivityResult);
+
+      if (_isOnline != currentlyOnline) {
+        _isOnline = currentlyOnline;
+        notifyListeners();
       }
+
+      if (!currentlyOnline) {
+        return;
+      }
+
+      await syncPendingTickets();
+      await fetchTickets(isAutoRefresh: true);
     });
 
     await syncPendingTickets();
@@ -266,7 +277,10 @@ class DttProvider extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('auth_token') ?? '';
 
-    final headers = <String, String>{'Accept': 'application/json'};
+    final headers = <String, String>{
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+    };
     if (token.trim().isNotEmpty) {
       headers['Authorization'] = 'Bearer ${token.trim()}';
     }
