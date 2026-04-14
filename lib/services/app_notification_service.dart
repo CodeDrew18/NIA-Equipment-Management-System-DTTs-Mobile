@@ -8,6 +8,8 @@ class AppNotificationService {
   // Keep this key in sync with AndroidManifest default channel id.
   static const String defaultChannelKey = 'transportation_updates_v2';
   static const String _channelKey = defaultChannelKey;
+  static const String _notificationIcon = 'resource://mipmap/launcher_icon';
+  static const String _notificationLargeIcon = 'asset://assets/ems_logo_1.png';
   static bool _initialized = false;
 
   static Future<void> initialize() async {
@@ -16,7 +18,7 @@ class AppNotificationService {
     }
 
     await AwesomeNotifications().initialize(
-      null,
+      _notificationIcon,
       [
         NotificationChannel(
           channelGroupKey: _channelGroupKey,
@@ -69,13 +71,15 @@ class AppNotificationService {
       content: NotificationContent(
         id: DateTime.now().millisecondsSinceEpoch.remainder(1000000),
         channelKey: _channelKey,
+        icon: _notificationIcon,
+        largeIcon: _notificationLargeIcon,
         title: title,
         body: body,
         displayOnForeground: true,
         displayOnBackground: true,
         wakeUpScreen: true,
         category: NotificationCategory.Message,
-        notificationLayout: NotificationLayout.Default,
+        notificationLayout: NotificationLayout.BigText,
       ),
     );
   }

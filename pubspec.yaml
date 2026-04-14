@@ -46,6 +46,9 @@ dependencies:
   firebase_core: ^4.6.0
   firebase_messaging: ^16.1.3
   calendar_date_picker2: 2.0.1
+  path_provider: ^2.1.5
+  open_filex: ^4.7.0
+  share_plus: ^10.0.2
 
 dev_dependencies:
   flutter_test:

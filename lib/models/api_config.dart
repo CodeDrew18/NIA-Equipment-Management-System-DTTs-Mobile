@@ -5,6 +5,8 @@ class ApiConfig {
   static const String _dailyTripTicketsPath = '/daily-trip-tickets';
   static const String _driverPerformanceEvaluationsPath =
       '/driver-performance-evaluations';
+  static const String _monthlyOfficialTravelReportDownloadPath =
+      '/monthly-official-travel-report/download';
   static const String _loginPath = '/login';
   static const String _fcmTokenPath = '/fcm-token';
   static const String _logoutPath = '/logout';
@@ -27,6 +29,12 @@ class ApiConfig {
 
   static Uri driverPerformanceEvaluationByIdUri(int id) {
     return Uri.parse('$apiBaseUrl$_driverPerformanceEvaluationsPath/$id');
+  }
+
+  static Uri monthlyOfficialTravelReportDownloadUri({required String month}) {
+    return Uri.parse(
+      '$apiBaseUrl$_monthlyOfficialTravelReportDownloadPath',
+    ).replace(queryParameters: {'month': month});
   }
 
   static Uri fcmTokenUri() {

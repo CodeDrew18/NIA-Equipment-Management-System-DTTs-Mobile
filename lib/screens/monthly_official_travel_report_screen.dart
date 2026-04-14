@@ -1,5 +1,16 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:calendar_date_picker2/calendar_date_picker2.dart';
+import 'package:ems/models/api_config.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:open_filex/open_filex.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:share_plus/share_plus.dart';
 
 class MonthlyOfficialTravelReportScreen extends StatefulWidget {
   const MonthlyOfficialTravelReportScreen({
@@ -37,6 +48,7 @@ class _MonthlyOfficialTravelReportScreenState
 
   late DateTime _selectedMonth;
   DateTime? _selectedCalendarDate;
+  bool _isDownloadingReport = false;
 
   @override
   void initState() {
@@ -76,16 +88,326 @@ class _MonthlyOfficialTravelReportScreenState
     });
   }
 
+  String _monthParameter() {
+    final year = _selectedMonth.year.toString().padLeft(4, '0');
+    final month = _selectedMonth.month.toString().padLeft(2, '0');
+    return '$year-$month';
+  }
+
+  String _defaultReportFileName() {
+    return 'monthly_official_travel_report_${_monthParameter()}.csv';
+  }
+
+  String _sanitizeFileName(String fileName) {
+    final sanitized = fileName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+
+    if (sanitized.isEmpty) {
+      return _defaultReportFileName();
+    }
+
+    return sanitized;
+  }
+
+  String _resolveFileNameFromHeaders(Map<String, String> headers) {
+    final disposition = headers['content-disposition'] ?? '';
+    if (disposition.trim().isEmpty) {
+      return _defaultReportFileName();
+    }
+
+    final fileNameStarMatch = RegExp(
+      r"filename\*=UTF-8''([^;]+)",
+      caseSensitive: false,
+    ).firstMatch(disposition);
+    if (fileNameStarMatch != null) {
+      final encoded = fileNameStarMatch.group(1) ?? '';
+      if (encoded.trim().isNotEmpty) {
+        return Uri.decodeComponent(encoded.trim());
+      }
+    }
+
+    final fileNameMatch = RegExp(
+      r'filename="?([^";]+)"?',
+      caseSensitive: false,
+    ).firstMatch(disposition);
+    if (fileNameMatch != null) {
+      final value = fileNameMatch.group(1)?.trim() ?? '';
+      if (value.isNotEmpty) {
+        return value;
+      }
+    }
+
+    return _defaultReportFileName();
+  }
+
+  String _truncateText(String value, {int maxLength = 360}) {
+    if (value.length <= maxLength) {
+      return value;
+    }
+
+    return '${value.substring(0, maxLength)}...';
+  }
+
+  String _extractBackendErrorMessage(http.Response response) {
+    final statusText = 'Request failed (HTTP ${response.statusCode})';
+    final rawBody = response.body.trim();
+
+    if (rawBody.isEmpty) {
+      return '$statusText: Empty backend response body.';
+    }
+
+    try {
+      final decoded = jsonDecode(rawBody);
+      final parts = <String>[];
+
+      if (decoded is Map<String, dynamic>) {
+        final message = decoded['message']?.toString().trim() ?? '';
+        if (message.isNotEmpty) {
+          parts.add(message);
+        }
+
+        final error = decoded['error']?.toString().trim() ?? '';
+        if (error.isNotEmpty) {
+          parts.add(error);
+        }
+
+        final errors = decoded['errors'];
+        if (errors is Map) {
+          errors.forEach((field, details) {
+            if (details is List) {
+              for (final detail in details) {
+                final text = detail?.toString().trim() ?? '';
+                if (text.isNotEmpty) {
+                  parts.add('${field.toString().trim()}: $text');
+                }
+              }
+              return;
+            }
+
+            final text = details?.toString().trim() ?? '';
+            if (text.isNotEmpty) {
+              parts.add('${field.toString().trim()}: $text');
+            }
+          });
+        }
+
+        if (parts.isNotEmpty) {
+          return '$statusText: ${_truncateText(parts.join(' | '))}';
+        }
+      }
+
+      if (decoded is List && decoded.isNotEmpty) {
+        return '$statusText: ${_truncateText(decoded.join(' | '))}';
+      }
+    } catch (_) {
+      // Fallback to raw response body when backend response is not JSON.
+    }
+
+    return '$statusText: ${_truncateText(rawBody)}';
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<Directory> _resolveDownloadDirectory() async {
+    if (kIsWeb) {
+      throw UnsupportedError(
+        'Saving to Downloads is not supported on web in this app build.',
+      );
+    }
+
+    if (Platform.isAndroid) {
+      final androidCandidates = <Directory>[
+        Directory('/storage/emulated/0/Download'),
+        Directory('/sdcard/Download'),
+      ];
+
+      for (final candidate in androidCandidates) {
+        if (await candidate.exists()) {
+          return candidate;
+        }
+      }
+
+      final preferred = androidCandidates.first;
+      await preferred.create(recursive: true);
+      return preferred;
+    }
+
+    final downloadsDirectory = await getDownloadsDirectory();
+    if (downloadsDirectory != null) {
+      return downloadsDirectory;
+    }
+
+    return getApplicationDocumentsDirectory();
+  }
+
+  Future<void> _openReportFile(File file) async {
+    final result = await OpenFilex.open(file.path);
+    if (!mounted) {
+      return;
+    }
+
+    if (result.type != ResultType.done) {
+      _showSnack('Could not open file: ${result.message}');
+    }
+  }
+
+  Future<void> _showInFilesApp(File file) async {
+    final result = await OpenFilex.open(file.parent.path);
+    if (!mounted) {
+      return;
+    }
+
+    if (result.type != ResultType.done) {
+      _showSnack('Could not open Files app: ${result.message}');
+    }
+  }
+
+  Future<void> _shareReportFile(File file) async {
+    await Share.shareXFiles(
+      [XFile(file.path)],
+      text: 'Monthly Official Travel Report (${_monthParameter()})',
+      subject: 'Monthly Official Travel Report',
+    );
+  }
+
+  Future<void> _showPostDownloadActions(File file) async {
+    if (!mounted) {
+      return;
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: Colors.white,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.folder_open_outlined),
+                title: const Text('Show in Files app'),
+                subtitle: Text(
+                  file.parent.path,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                onTap: () async {
+                  Navigator.of(sheetContext).pop();
+                  await _showInFilesApp(file);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.open_in_new_outlined),
+                title: const Text('Open report'),
+                subtitle: Text(
+                  p.basename(file.path),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                onTap: () async {
+                  Navigator.of(sheetContext).pop();
+                  await _openReportFile(file);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.share_outlined),
+                title: const Text('Share report'),
+                onTap: () async {
+                  Navigator.of(sheetContext).pop();
+                  await _shareReportFile(file);
+                },
+              ),
+              const SizedBox(height: 6),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<Map<String, String>> _buildDownloadHeaders() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('auth_token')?.trim() ?? '';
+
+    final headers = <String, String>{'Accept': 'text/csv, application/json'};
+
+    if (token.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $token';
+    }
+
+    return headers;
+  }
+
+  Future<void> _downloadMonthlyReport() async {
+    if (_isDownloadingReport) {
+      return;
+    }
+
+    setState(() {
+      _isDownloadingReport = true;
+    });
+
+    try {
+      final uri = ApiConfig.monthlyOfficialTravelReportDownloadUri(
+        month: _monthParameter(),
+      );
+
+      final response = await http.get(
+        uri,
+        headers: await _buildDownloadHeaders(),
+      );
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        _showSnack(_extractBackendErrorMessage(response));
+        return;
+      }
+
+      final bytes = response.bodyBytes;
+      if (bytes.isEmpty) {
+        _showSnack('Downloaded report was empty.');
+        return;
+      }
+
+      final fileName = _sanitizeFileName(
+        _resolveFileNameFromHeaders(response.headers),
+      );
+      final downloadDir = await _resolveDownloadDirectory();
+
+      final filePath = p.join(downloadDir.path, fileName);
+      final outputFile = File(filePath);
+      await outputFile.writeAsBytes(bytes, flush: true);
+
+      _showSnack('Report saved to Downloads: ${outputFile.path}');
+      await _showPostDownloadActions(outputFile);
+    } catch (error) {
+      _showSnack(
+        'Download failed: ${_truncateText(error.toString(), maxLength: 240)}',
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDownloadingReport = false;
+        });
+      }
+    }
+  }
+
   void _showPrintHint() {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Print is available in web. Mobile print integration can be added next.',
-          ),
-        ),
+        const SnackBar(content: Text('Preparing report download...')),
       );
+
+    _downloadMonthlyReport();
   }
 
   DateTime? _parseDate(dynamic value) {
@@ -1093,7 +1415,7 @@ class _MonthlyOfficialTravelReportScreenState
                 );
 
                 final printButton = ElevatedButton.icon(
-                  onPressed: _showPrintHint,
+                  onPressed: _isDownloadingReport ? null : _showPrintHint,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF003466),
                     foregroundColor: Colors.white,
@@ -1103,7 +1425,9 @@ class _MonthlyOfficialTravelReportScreenState
                     ),
                   ),
                   icon: const Icon(Icons.print_outlined),
-                  label: const Text('Print Report'),
+                  label: Text(
+                    _isDownloadingReport ? 'Downloading...' : 'Print Report',
+                  ),
                 );
 
                 if (compact) {

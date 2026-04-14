@@ -41,6 +41,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      title: 'Ems',
       home: isLoggedIn ? const HomepageScreen() : const LoginPageScreen(),
       debugShowCheckedModeBanner: false,
     );
