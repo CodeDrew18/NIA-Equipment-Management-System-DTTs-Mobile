@@ -1,7 +1,7 @@
 class ApiConfig {
   ApiConfig._();
 
-  static const String apiBaseUrl = 'http://192.168.1.210:8000/api';
+  static const String apiBaseUrl = 'http://192.168.1.41:8000/api';
   static const String _dailyTripTicketsPath = '/daily-trip-tickets';
   static const String _driverPerformanceEvaluationsPath =
       '/driver-performance-evaluations';
@@ -31,10 +31,21 @@ class ApiConfig {
     return Uri.parse('$apiBaseUrl$_driverPerformanceEvaluationsPath/$id');
   }
 
-  static Uri monthlyOfficialTravelReportDownloadUri({required String month}) {
+  static Uri monthlyOfficialTravelReportDownloadUri({
+    required String month,
+    String format = 'xlsx',
+    String? copy,
+  }) {
+    final queryParameters = <String, String>{'month': month, 'format': format};
+
+    final normalizedCopy = copy?.trim() ?? '';
+    if (normalizedCopy.isNotEmpty) {
+      queryParameters['copy'] = normalizedCopy;
+    }
+
     return Uri.parse(
       '$apiBaseUrl$_monthlyOfficialTravelReportDownloadPath',
-    ).replace(queryParameters: {'month': month});
+    ).replace(queryParameters: queryParameters);
   }
 
   static Uri fcmTokenUri() {

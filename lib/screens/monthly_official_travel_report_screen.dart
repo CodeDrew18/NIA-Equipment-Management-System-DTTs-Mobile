@@ -94,24 +94,44 @@ class _MonthlyOfficialTravelReportScreenState
     return '$year-$month';
   }
 
-  String _defaultReportFileName() {
-    return 'monthly_official_travel_report_${_monthParameter()}.csv';
+  String _defaultReportFileName({String? copy}) {
+    final sanitizedCopy = (copy?.trim() ?? '')
+        .replaceAll(RegExp(r'\s+'), '_')
+        .replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '');
+    final copySuffix = sanitizedCopy.isEmpty ? '' : '_$sanitizedCopy';
+    return 'monthly_official_travel_report_${_monthParameter()}$copySuffix.xlsx';
   }
 
-  String _sanitizeFileName(String fileName) {
+  String _ensureXlsxExtension(String fileName) {
+    final ext = p.extension(fileName).toLowerCase();
+    if (ext == '.xlsx') {
+      return fileName;
+    }
+
+    if (ext.isEmpty) {
+      return '$fileName.xlsx';
+    }
+
+    return '${p.withoutExtension(fileName)}.xlsx';
+  }
+
+  String _sanitizeFileName(String fileName, {String? fallbackCopy}) {
     final sanitized = fileName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
 
     if (sanitized.isEmpty) {
-      return _defaultReportFileName();
+      return _defaultReportFileName(copy: fallbackCopy);
     }
 
-    return sanitized;
+    return _ensureXlsxExtension(sanitized);
   }
 
-  String _resolveFileNameFromHeaders(Map<String, String> headers) {
+  String _resolveFileNameFromHeaders(
+    Map<String, String> headers, {
+    String? fallbackCopy,
+  }) {
     final disposition = headers['content-disposition'] ?? '';
     if (disposition.trim().isEmpty) {
-      return _defaultReportFileName();
+      return _defaultReportFileName(copy: fallbackCopy);
     }
 
     final fileNameStarMatch = RegExp(
@@ -136,7 +156,7 @@ class _MonthlyOfficialTravelReportScreenState
       }
     }
 
-    return _defaultReportFileName();
+    return _defaultReportFileName(copy: fallbackCopy);
   }
 
   String _truncateText(String value, {int maxLength = 360}) {
@@ -337,7 +357,10 @@ class _MonthlyOfficialTravelReportScreenState
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('auth_token')?.trim() ?? '';
 
-    final headers = <String, String>{'Accept': 'text/csv, application/json'};
+    final headers = <String, String>{
+      'Accept':
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/octet-stream, application/json',
+    };
 
     if (token.isNotEmpty) {
       headers['Authorization'] = 'Bearer $token';
@@ -356,8 +379,17 @@ class _MonthlyOfficialTravelReportScreenState
     });
 
     try {
+      final monthVehicleTickets = _ticketsForSelectedVehicleInMonth();
+      final metadataTicket = _metadataTicketFor(monthVehicleTickets);
+      final reportCopy = _resolveReportCopy(
+        monthVehicleTickets,
+        metadataTicket,
+      );
+
       final uri = ApiConfig.monthlyOfficialTravelReportDownloadUri(
         month: _monthParameter(),
+        format: 'xlsx',
+        copy: reportCopy,
       );
 
       final response = await http.get(
@@ -377,7 +409,8 @@ class _MonthlyOfficialTravelReportScreenState
       }
 
       final fileName = _sanitizeFileName(
-        _resolveFileNameFromHeaders(response.headers),
+        _resolveFileNameFromHeaders(response.headers, fallbackCopy: reportCopy),
+        fallbackCopy: reportCopy,
       );
       final downloadDir = await _resolveDownloadDirectory();
 
@@ -601,6 +634,84 @@ class _MonthlyOfficialTravelReportScreenState
     }
 
     return false;
+  }
+
+  List<Map<String, dynamic>> _ticketsForSelectedVehicleInMonth() {
+    final monthTickets = _ticketsForSelectedMonth();
+    final resolvedVehiclePlate = _primaryVehiclePlate(monthTickets);
+    final normalizedResolvedPlate = _normalizePlate(resolvedVehiclePlate ?? '');
+
+    if (normalizedResolvedPlate.isEmpty) {
+      return monthTickets;
+    }
+
+    return monthTickets
+        .where((ticket) => _ticketMatchesPlate(ticket, normalizedResolvedPlate))
+        .toList();
+  }
+
+  Map<String, dynamic> _metadataTicketFor(
+    List<Map<String, dynamic>> monthVehicleTickets,
+  ) {
+    final monthTickets = _ticketsForSelectedMonth();
+    return monthVehicleTickets.isNotEmpty
+        ? monthVehicleTickets.first
+        : (monthTickets.isNotEmpty
+            ? monthTickets.first
+            : (widget.tickets.isNotEmpty
+                ? widget.tickets.first
+                : const <String, dynamic>{}));
+  }
+
+  String? _copyValueFromTicket(Map<String, dynamic> ticket) {
+    final requestFormData = _asStringMap(ticket['request_form_data']);
+    return _firstNonEmptyText([
+      ticket['copy'],
+      ticket['copy_key'],
+      ticket['copy_number'],
+      ticket['copy_type'],
+      ticket['report_copy'],
+      requestFormData['copy'],
+      requestFormData['copy_key'],
+      requestFormData['copy_number'],
+      requestFormData['copy_type'],
+      requestFormData['report_copy'],
+    ]);
+  }
+
+  String? _resolveReportCopy(
+    List<Map<String, dynamic>> monthVehicleTickets,
+    Map<String, dynamic> metadataTicket,
+  ) {
+    final counts = <String, int>{};
+
+    for (final ticket in monthVehicleTickets) {
+      final copyValue = _copyValueFromTicket(ticket)?.trim() ?? '';
+      if (copyValue.isEmpty) {
+        continue;
+      }
+      counts[copyValue] = (counts[copyValue] ?? 0) + 1;
+    }
+
+    final metadataCopy = _copyValueFromTicket(metadataTicket)?.trim() ?? '';
+    if (metadataCopy.isNotEmpty) {
+      counts[metadataCopy] = (counts[metadataCopy] ?? 0) + 2;
+    }
+
+    if (counts.isEmpty) {
+      return null;
+    }
+
+    final sortedEntries =
+        counts.entries.toList()..sort((a, b) {
+          final byCount = b.value.compareTo(a.value);
+          if (byCount != 0) {
+            return byCount;
+          }
+          return a.key.compareTo(b.key);
+        });
+
+    return sortedEntries.first.key;
   }
 
   String _formatMonth(DateTime month) {
@@ -1321,26 +1432,10 @@ class _MonthlyOfficialTravelReportScreenState
   Widget build(BuildContext context) {
     final monthTickets = _ticketsForSelectedMonth();
     final resolvedVehiclePlate = _primaryVehiclePlate(monthTickets);
-    final normalizedResolvedPlate = _normalizePlate(resolvedVehiclePlate ?? '');
-    final monthVehicleTickets =
-        normalizedResolvedPlate.isEmpty
-            ? monthTickets
-            : monthTickets
-                .where(
-                  (ticket) =>
-                      _ticketMatchesPlate(ticket, normalizedResolvedPlate),
-                )
-                .toList();
+    final monthVehicleTickets = _ticketsForSelectedVehicleInMonth();
     final rows = _buildRows(monthVehicleTickets);
 
-    final metadataTicket =
-        monthVehicleTickets.isNotEmpty
-            ? monthVehicleTickets.first
-            : (monthTickets.isNotEmpty
-                ? monthTickets.first
-                : (widget.tickets.isNotEmpty
-                    ? widget.tickets.first
-                    : const <String, dynamic>{}));
+    final metadataTicket = _metadataTicketFor(monthVehicleTickets);
 
     final requestData = _asStringMap(metadataTicket['request_form_data']);
 
